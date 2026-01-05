@@ -2,61 +2,90 @@
 """
 Pun Generator - Finds pun opportunities between two concepts.
 
-Takes two words/phrases, looks up related words in ConceptNet,
+Takes two words/phrases, looks up related words in WordNet (offline),
 compares their pronunciations, and finds pairs with small edit distance
 (potential puns).
 """
 
 import argparse
-import requests
 import nltk
-from nltk.corpus import cmudict
+from nltk.corpus import cmudict, wordnet
 from typing import Optional
 
 
-def ensure_cmudict():
-    """Download cmudict if not already present."""
-    try:
-        cmudict.dict()
-    except LookupError:
-        print("Downloading CMU Pronouncing Dictionary...")
-        nltk.download('cmudict', quiet=True)
+def ensure_nltk_data():
+    """Download required NLTK data if not already present."""
+    for resource, name in [('cmudict', 'CMU Pronouncing Dictionary'),
+                           ('wordnet', 'WordNet')]:
+        try:
+            if resource == 'cmudict':
+                cmudict.dict()
+            else:
+                wordnet.synsets('test')
+        except LookupError:
+            print(f"Downloading {name}...")
+            nltk.download(resource, quiet=True)
 
 
-def get_conceptnet_related(concept: str, limit: int = 50) -> list[str]:
+def get_wordnet_related(concept: str, limit: int = 50) -> list[str]:
     """
-    Query ConceptNet for words related to the given concept.
+    Get words related to the given concept using WordNet (offline).
+
+    Finds synonyms, hypernyms (more general), hyponyms (more specific),
+    and other semantically related words.
 
     Args:
         concept: The word or phrase to look up
         limit: Maximum number of related words to return
 
     Returns:
-        List of related words/phrases
+        List of related words
     """
-    # Normalize the concept for ConceptNet API
-    normalized = concept.lower().replace(' ', '_')
-    url = f"http://api.conceptnet.io/c/en/{normalized}"
-
-    try:
-        response = requests.get(url, params={'limit': limit}, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-    except requests.RequestException as e:
-        print(f"Warning: Could not fetch ConceptNet data for '{concept}': {e}")
-        return [concept]  # Return original concept as fallback
-
     related_words = set()
     related_words.add(concept.lower())
 
-    for edge in data.get('edges', []):
-        # Extract words from both start and end of each edge
-        for node_key in ['start', 'end']:
-            node = edge.get(node_key, {})
-            if node.get('language') == 'en':
-                label = node.get('label', '').lower()
-                if label and len(label) < 30:  # Skip overly long phrases
-                    related_words.add(label)
+    # Get all synsets for the concept
+    synsets = wordnet.synsets(concept.lower())
+
+    for synset in synsets:
+        # Add lemma names (synonyms)
+        for lemma in synset.lemmas():
+            word = lemma.name().replace('_', ' ').lower()
+            related_words.add(word)
+
+            # Add antonyms
+            for antonym in lemma.antonyms():
+                related_words.add(antonym.name().replace('_', ' ').lower())
+
+        # Add hypernyms (more general terms)
+        for hypernym in synset.hypernyms():
+            for lemma in hypernym.lemmas():
+                related_words.add(lemma.name().replace('_', ' ').lower())
+
+        # Add hyponyms (more specific terms)
+        for hyponym in synset.hyponyms():
+            for lemma in hyponym.lemmas():
+                related_words.add(lemma.name().replace('_', ' ').lower())
+
+        # Add meronyms (part-of relationships)
+        for meronym in synset.part_meronyms() + synset.substance_meronyms():
+            for lemma in meronym.lemmas():
+                related_words.add(lemma.name().replace('_', ' ').lower())
+
+        # Add holonyms (whole-of relationships)
+        for holonym in synset.part_holonyms() + synset.substance_holonyms():
+            for lemma in holonym.lemmas():
+                related_words.add(lemma.name().replace('_', ' ').lower())
+
+        # Add similar-to relationships
+        for similar in synset.similar_tos():
+            for lemma in similar.lemmas():
+                related_words.add(lemma.name().replace('_', ' ').lower())
+
+        # Add also-see relationships
+        for also_see in synset.also_sees():
+            for lemma in also_see.lemmas():
+                related_words.add(lemma.name().replace('_', ' ').lower())
 
     return list(related_words)[:limit]
 
@@ -140,15 +169,15 @@ def find_pun_candidates(
     Returns:
         List of tuples: (word1, word2, edit_distance, pronunciation1, pronunciation2)
     """
-    ensure_cmudict()
+    ensure_nltk_data()
     pron_dict = cmudict.dict()
 
     print(f"Looking up words related to '{concept1}'...")
-    words1 = get_conceptnet_related(concept1, limit=related_limit)
+    words1 = get_wordnet_related(concept1, limit=related_limit)
     print(f"  Found {len(words1)} related words")
 
     print(f"Looking up words related to '{concept2}'...")
-    words2 = get_conceptnet_related(concept2, limit=related_limit)
+    words2 = get_wordnet_related(concept2, limit=related_limit)
     print(f"  Found {len(words2)} related words")
 
     candidates = []
