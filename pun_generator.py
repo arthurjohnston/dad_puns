@@ -1,109 +1,60 @@
 #!/usr/bin/env python3
 """
-Pun Generator - Finds pun opportunities between two concepts.
+Pun Generator - Finds pun opportunities by matching words to idioms.
 
-Takes two words/phrases, looks up related words in WordNet (offline),
-compares their pronunciations, and finds pairs with small edit distance
-(potential puns).
+Takes a single word, compares its pronunciation to words in common idioms,
+and suggests puns where a word can be swapped with a similar-sounding word.
 """
 
 import argparse
+import os
 import nltk
-from nltk.corpus import cmudict, wordnet
+from nltk.corpus import cmudict
+from pathlib import Path
 from typing import Optional
 
-
-def ensure_nltk_data():
-    """Download required NLTK data if not already present."""
-    for resource, name in [('cmudict', 'CMU Pronouncing Dictionary'),
-                           ('wordnet', 'WordNet')]:
-        try:
-            if resource == 'cmudict':
-                cmudict.dict()
-            else:
-                wordnet.synsets('test')
-        except LookupError:
-            print(f"Downloading {name}...")
-            nltk.download(resource, quiet=True)
+# Common words to skip when matching (too short/generic to make good puns)
+STOPWORDS = {
+    'a', 'an', 'the', 'in', 'on', 'at', 'to', 'of', 'by', 'is', 'it',
+    'be', 'as', 'or', 'if', 'so', 'no', 'up', 'we', 'he', 'me', 'my',
+    'do', 'go', 'us', 'am',
+}
 
 
-def get_wordnet_related(concept: str, limit: int = 50) -> list[str]:
-    """
-    Get words related to the given concept using WordNet (offline).
+def ensure_cmudict():
+    """Download cmudict if not already present."""
+    try:
+        cmudict.dict()
+    except LookupError:
+        print("Downloading CMU Pronouncing Dictionary...")
+        nltk.download('cmudict', quiet=True)
 
-    Finds synonyms, hypernyms (more general), hyponyms (more specific),
-    and other semantically related words.
 
-    Args:
-        concept: The word or phrase to look up
-        limit: Maximum number of related words to return
+def load_idioms(idioms_file: str) -> list[str]:
+    """Load idioms from a text file (one per line)."""
+    path = Path(idioms_file)
+    if not path.exists():
+        # Try relative to script location
+        script_dir = Path(__file__).parent
+        path = script_dir / idioms_file
 
-    Returns:
-        List of related words
-    """
-    related_words = set()
-    related_words.add(concept.lower())
+    if not path.exists():
+        print(f"Warning: Idioms file '{idioms_file}' not found")
+        return []
 
-    # Get all synsets for the concept
-    synsets = wordnet.synsets(concept.lower())
-
-    for synset in synsets:
-        # Add lemma names (synonyms)
-        for lemma in synset.lemmas():
-            word = lemma.name().replace('_', ' ').lower()
-            related_words.add(word)
-
-            # Add antonyms
-            for antonym in lemma.antonyms():
-                related_words.add(antonym.name().replace('_', ' ').lower())
-
-        # Add hypernyms (more general terms)
-        for hypernym in synset.hypernyms():
-            for lemma in hypernym.lemmas():
-                related_words.add(lemma.name().replace('_', ' ').lower())
-
-        # Add hyponyms (more specific terms)
-        for hyponym in synset.hyponyms():
-            for lemma in hyponym.lemmas():
-                related_words.add(lemma.name().replace('_', ' ').lower())
-
-        # Add meronyms (part-of relationships)
-        for meronym in synset.part_meronyms() + synset.substance_meronyms():
-            for lemma in meronym.lemmas():
-                related_words.add(lemma.name().replace('_', ' ').lower())
-
-        # Add holonyms (whole-of relationships)
-        for holonym in synset.part_holonyms() + synset.substance_holonyms():
-            for lemma in holonym.lemmas():
-                related_words.add(lemma.name().replace('_', ' ').lower())
-
-        # Add similar-to relationships
-        for similar in synset.similar_tos():
-            for lemma in similar.lemmas():
-                related_words.add(lemma.name().replace('_', ' ').lower())
-
-        # Add also-see relationships
-        for also_see in synset.also_sees():
-            for lemma in also_see.lemmas():
-                related_words.add(lemma.name().replace('_', ' ').lower())
-
-    return list(related_words)[:limit]
+    with open(path, 'r') as f:
+        return [line.strip().lower() for line in f if line.strip()]
 
 
 def get_pronunciation(word: str, pron_dict: dict) -> Optional[list[str]]:
     """
     Get the CMU pronunciation for a word.
 
-    Args:
-        word: The word to look up
-        pron_dict: The CMU pronouncing dictionary
-
     Returns:
         List of phonemes or None if not found
     """
     word_lower = word.lower()
     if word_lower in pron_dict:
-        # Return first pronunciation (some words have multiple)
         return pron_dict[word_lower][0]
     return None
 
@@ -111,114 +62,115 @@ def get_pronunciation(word: str, pron_dict: dict) -> Optional[list[str]]:
 def phoneme_edit_distance(pron1: list[str], pron2: list[str]) -> int:
     """
     Calculate the Levenshtein edit distance between two pronunciations.
-
-    Args:
-        pron1: First pronunciation (list of phonemes)
-        pron2: Second pronunciation (list of phonemes)
-
-    Returns:
-        Edit distance (number of insertions, deletions, or substitutions)
+    Stressed vowels (ending in '1') must match - substituting them costs heavily.
     """
     m, n = len(pron1), len(pron2)
-
-    # Create distance matrix
+    INF = 1000  # High cost to prevent stressed vowel changes
     dp = [[0] * (n + 1) for _ in range(m + 1)]
 
-    # Initialize base cases
     for i in range(m + 1):
         dp[i][0] = i
     for j in range(n + 1):
         dp[0][j] = j
 
-    # Fill in the rest
     for i in range(1, m + 1):
         for j in range(1, n + 1):
-            # Strip stress markers for comparison (e.g., "AH0" -> "AH")
-            p1 = pron1[i-1].rstrip('012')
-            p2 = pron2[j-1].rstrip('012')
+            ph1 = pron1[i-1]
+            ph2 = pron2[j-1]
+            # Strip stress markers for comparison
+            p1 = ph1.rstrip('012')
+            p2 = ph2.rstrip('012')
 
             if p1 == p2:
                 dp[i][j] = dp[i-1][j-1]
             else:
-                dp[i][j] = 1 + min(
-                    dp[i-1][j],      # deletion
-                    dp[i][j-1],      # insertion
-                    dp[i-1][j-1]     # substitution
+                # Heavy penalty if either is a primary stressed vowel
+                if ph1.endswith('1') or ph2.endswith('1'):
+                    sub_cost = INF
+                else:
+                    sub_cost = 1
+                dp[i][j] = min(
+                    dp[i-1][j] + 1,      # deletion
+                    dp[i][j-1] + 1,      # insertion
+                    dp[i-1][j-1] + sub_cost  # substitution
                 )
 
     return dp[m][n]
 
 
-def find_pun_candidates(
-    concept1: str,
-    concept2: str,
-    max_edit_distance: int = 3,
-    min_edit_distance: int = 1,
-    related_limit: int = 50
-) -> list[tuple[str, str, int, list[str], list[str]]]:
+def get_stressed_vowel(pron: list[str]) -> Optional[str]:
+    """Extract the primary stressed vowel (ending in '1') from a pronunciation."""
+    for phoneme in pron:
+        if phoneme.endswith('1'):
+            return phoneme.rstrip('1')
+    return None
+
+
+def find_idiom_puns(
+    word: str,
+    idioms: list[str],
+    pron_dict: dict,
+    max_distance: int = 1
+) -> list[tuple[str, str, str, int]]:
     """
-    Find pun candidates between two concepts.
+    Find idioms where a word can be replaced with the input word.
 
     Args:
-        concept1: First concept/word
-        concept2: Second concept/word
-        max_edit_distance: Maximum pronunciation edit distance to consider
-        min_edit_distance: Minimum edit distance (0 would be identical)
-        related_limit: How many related words to fetch per concept
+        word: The word to find pun matches for
+        idioms: List of idiom phrases
+        pron_dict: CMU pronunciation dictionary
+        max_distance: Maximum edit distance (default 1)
 
     Returns:
-        List of tuples: (word1, word2, edit_distance, pronunciation1, pronunciation2)
+        List of tuples: (original_idiom, punned_idiom, matched_word, distance)
     """
-    ensure_nltk_data()
-    pron_dict = cmudict.dict()
+    word_pron = get_pronunciation(word, pron_dict)
+    if not word_pron:
+        print(f"Warning: No pronunciation found for '{word}'")
+        return []
 
-    print(f"Looking up words related to '{concept1}'...")
-    words1 = get_wordnet_related(concept1, limit=related_limit)
-    print(f"  Found {len(words1)} related words")
+    stressed_vowel = get_stressed_vowel(word_pron)
 
-    print(f"Looking up words related to '{concept2}'...")
-    words2 = get_wordnet_related(concept2, limit=related_limit)
-    print(f"  Found {len(words2)} related words")
+    results = []
+    seen_puns = set()
 
-    candidates = []
+    for idiom in idioms:
+        words_in_idiom = idiom.split()
 
-    # Get pronunciations for all words
-    prons1 = {}
-    for word in words1:
-        # Handle multi-word phrases by checking individual words
-        tokens = word.split()
-        if len(tokens) == 1:
-            pron = get_pronunciation(word, pron_dict)
-            if pron:
-                prons1[word] = pron
-
-    prons2 = {}
-    for word in words2:
-        tokens = word.split()
-        if len(tokens) == 1:
-            pron = get_pronunciation(word, pron_dict)
-            if pron:
-                prons2[word] = pron
-
-    print(f"Found pronunciations for {len(prons1)} words from concept 1")
-    print(f"Found pronunciations for {len(prons2)} words from concept 2")
-    print("Comparing pronunciations...")
-
-    # Compare all pairs
-    for word1, pron1 in prons1.items():
-        for word2, pron2 in prons2.items():
-            if word1 == word2:
+        for i, idiom_word in enumerate(words_in_idiom):
+            # Clean punctuation
+            clean_word = ''.join(c for c in idiom_word if c.isalpha())
+            if not clean_word or clean_word == word.lower():
                 continue
 
-            distance = phoneme_edit_distance(pron1, pron2)
+            # Skip common stopwords
+            if clean_word in STOPWORDS:
+                continue
 
-            if min_edit_distance <= distance <= max_edit_distance:
-                candidates.append((word1, word2, distance, pron1, pron2))
+            idiom_word_pron = get_pronunciation(clean_word, pron_dict)
+            if not idiom_word_pron:
+                continue
 
-    # Sort by edit distance (closest matches first)
-    candidates.sort(key=lambda x: (x[2], x[0], x[1]))
+            # Stressed vowels must match
+            if get_stressed_vowel(idiom_word_pron) != stressed_vowel:
+                continue
 
-    return candidates
+            distance = phoneme_edit_distance(word_pron, idiom_word_pron)
+
+            if 0 < distance <= max_distance:
+                # Create the punned version
+                new_words = words_in_idiom.copy()
+                new_words[i] = word.upper()
+                punned_idiom = ' '.join(new_words)
+
+                # Avoid duplicates
+                if punned_idiom not in seen_puns:
+                    seen_puns.add(punned_idiom)
+                    results.append((idiom, punned_idiom, clean_word, distance))
+
+    # Sort by distance, then alphabetically
+    results.sort(key=lambda x: (x[3], x[0]))
+    return results
 
 
 def format_pronunciation(pron: list[str]) -> str:
@@ -228,76 +180,78 @@ def format_pronunciation(pron: list[str]) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate puns by finding phonetically similar words between two concepts.',
+        description='Find pun opportunities by matching a word to similar-sounding words in idioms.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s "cat" "music"
-  %(prog)s "programming" "food"
-  %(prog)s "ocean" "space"
+  %(prog)s "sun"
+  %(prog)s "deer" --max-distance 2
+  %(prog)s "knight" --show-pronunciation
         """
     )
     parser.add_argument(
-        'concept1',
-        help='First concept (word or phrase in quotes)'
-    )
-    parser.add_argument(
-        'concept2',
-        help='Second concept (word or phrase in quotes)'
+        'word',
+        help='The word to find pun matches for'
     )
     parser.add_argument(
         '--max-distance', '-d',
         type=int,
-        default=3,
-        help='Maximum phoneme edit distance (default: 3)'
-    )
-    parser.add_argument(
-        '--min-distance', '-m',
-        type=int,
         default=1,
-        help='Minimum phoneme edit distance (default: 1)'
+        help='Maximum phoneme edit distance (default: 1)'
     )
     parser.add_argument(
-        '--limit', '-l',
-        type=int,
-        default=50,
-        help='Number of related words to fetch per concept (default: 50)'
+        '--idioms-file', '-f',
+        default='idioms.txt',
+        help='Path to idioms file (default: idioms.txt)'
     )
     parser.add_argument(
         '--show-pronunciation', '-p',
         action='store_true',
-        help='Show phonetic pronunciations in output'
+        help='Show phonetic pronunciations'
     )
 
     args = parser.parse_args()
 
-    print(f"\nFinding puns between '{args.concept1}' and '{args.concept2}'...\n")
+    print(f"\nFinding idiom puns for '{args.word}'...\n")
 
-    candidates = find_pun_candidates(
-        args.concept1,
-        args.concept2,
-        max_edit_distance=args.max_distance,
-        min_edit_distance=args.min_distance,
-        related_limit=args.limit
-    )
+    ensure_cmudict()
+    pron_dict = cmudict.dict()
 
-    if not candidates:
-        print("\nNo pun candidates found. Try:")
-        print("  - Different concepts")
-        print("  - Increasing --max-distance")
-        print("  - Increasing --limit for more related words")
+    # Show input word pronunciation
+    word_pron = get_pronunciation(args.word, pron_dict)
+    if word_pron and args.show_pronunciation:
+        print(f"'{args.word}' pronunciation: [{format_pronunciation(word_pron)}]\n")
+
+    idioms = load_idioms(args.idioms_file)
+    if not idioms:
+        print("No idioms loaded. Please check your idioms file.")
         return
 
-    print(f"\n{'='*60}")
-    print(f"Found {len(candidates)} potential pun pairs:")
+    print(f"Loaded {len(idioms)} idioms")
+    print(f"Searching for words with edit distance <= {args.max_distance}...\n")
+
+    results = find_idiom_puns(args.word, idioms, pron_dict, args.max_distance)
+
+    if not results:
+        print("No pun matches found. Try:")
+        print("  - A different word")
+        print("  - Increasing --max-distance")
+        return
+
+    print(f"{'='*60}")
+    print(f"Found {len(results)} potential puns:")
     print(f"{'='*60}\n")
 
-    for word1, word2, distance, pron1, pron2 in candidates:
-        print(f"  {word1} <-> {word2}  (edit distance: {distance})")
+    for original, punned, matched_word, distance in results:
+        print(f"  {original}")
+        print(f"  → {punned}")
+        print(f"    ('{matched_word}' → '{args.word}', distance: {distance})")
+
         if args.show_pronunciation:
-            print(f"    [{format_pronunciation(pron1)}]")
-            print(f"    [{format_pronunciation(pron2)}]")
-            print()
+            matched_pron = get_pronunciation(matched_word, pron_dict)
+            if matched_pron and word_pron:
+                print(f"    [{format_pronunciation(matched_pron)}] → [{format_pronunciation(word_pron)}]")
+        print()
 
 
 if __name__ == '__main__':
