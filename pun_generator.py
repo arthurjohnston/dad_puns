@@ -13,6 +13,8 @@ from nltk.corpus import cmudict
 from pathlib import Path
 from typing import Optional
 
+from conceptnet_loader import load_conceptnet, get_related_words
+
 # Common words to skip when matching (too short/generic to make good puns)
 STOPWORDS = {
     'a', 'an', 'the', 'in', 'on', 'at', 'to', 'of', 'by', 'is', 'it',
@@ -110,8 +112,10 @@ def find_idiom_puns(
     word: str,
     idioms: list[str],
     pron_dict: dict,
-    max_distance: int = 1
-) -> list[tuple[str, str, str, int]]:
+    max_distance: int = 1,
+    source_word: str | None = None,
+    relation: str | None = None
+) -> list[tuple[str, str, str, int, str | None, str | None]]:
     """
     Find idioms where a word can be replaced with the input word.
 
@@ -120,13 +124,17 @@ def find_idiom_puns(
         idioms: List of idiom phrases
         pron_dict: CMU pronunciation dictionary
         max_distance: Maximum edit distance (default 1)
+        source_word: The original input word (if word is a related word)
+        relation: The ConceptNet relation (if word is a related word)
 
     Returns:
-        List of tuples: (original_idiom, punned_idiom, matched_word, distance)
+        List of tuples: (original_idiom, punned_idiom, matched_word, distance, source_word, relation)
     """
     word_pron = get_pronunciation(word, pron_dict)
     if not word_pron:
-        print(f"Warning: No pronunciation found for '{word}'")
+        # Only warn for single words (multi-word phrases won't have pronunciations)
+        if ' ' not in word:
+            print(f"Warning: No pronunciation found for '{word}'")
         return []
 
     stressed_vowel = get_stressed_vowel(word_pron)
@@ -166,7 +174,7 @@ def find_idiom_puns(
                 # Avoid duplicates
                 if punned_idiom not in seen_puns:
                     seen_puns.add(punned_idiom)
-                    results.append((idiom, punned_idiom, clean_word, distance))
+                    results.append((idiom, punned_idiom, clean_word, distance, source_word, relation))
 
     # Sort by distance, then alphabetically
     results.sort(key=lambda x: (x[3], x[0]))
@@ -228,9 +236,36 @@ Examples:
         return
 
     print(f"Loaded {len(idioms)} idioms")
+
+    # Load ConceptNet for related words
+    print("Loading ConceptNet...")
+    concept_dict = load_conceptnet()
+
     print(f"Searching for words with edit distance <= {args.max_distance}...\n")
 
+    # Search with the original word
     results = find_idiom_puns(args.word, idioms, pron_dict, args.max_distance)
+
+    # Also search with related words from ConceptNet
+    seen_puns = set(r[1] for r in results)  # Track punned idioms we've seen
+    entries = concept_dict.get(args.word.lower(), [])
+    for entry in entries:
+        related_results = find_idiom_puns(
+            entry.end,
+            idioms,
+            pron_dict,
+            args.max_distance,
+            source_word=args.word,
+            relation=entry.relation
+        )
+        # Only add new puns we haven't seen
+        for r in related_results:
+            if r[1] not in seen_puns:
+                seen_puns.add(r[1])
+                results.append(r)
+
+    # Re-sort all results
+    results.sort(key=lambda x: (x[3], x[0]))
 
     if not results:
         print("No pun matches found. Try:")
@@ -242,15 +277,28 @@ Examples:
     print(f"Found {len(results)} potential puns:")
     print(f"{'='*60}\n")
 
-    for original, punned, matched_word, distance in results:
+    for original, punned, matched_word, distance, source_word, relation in results:
         print(f"  {original}")
         print(f"  → {punned}")
-        print(f"    ('{matched_word}' → '{args.word}', distance: {distance})")
+
+        # Get the word used for the pun (either original input or related word)
+        pun_word = args.word if source_word is None else source_word
+        # Figure out what word was actually substituted
+        substituted_word = args.word if relation is None else next(
+            (w for w in punned.split() if w.isupper()), args.word
+        ).lower()
+
+        if relation:
+            print(f"    ('{matched_word}' → '{substituted_word}', distance: {distance})")
+            print(f"    ({substituted_word}: {relation} of '{args.word}')")
+        else:
+            print(f"    ('{matched_word}' → '{args.word}', distance: {distance})")
 
         if args.show_pronunciation:
             matched_pron = get_pronunciation(matched_word, pron_dict)
-            if matched_pron and word_pron:
-                print(f"    [{format_pronunciation(matched_pron)}] → [{format_pronunciation(word_pron)}]")
+            sub_pron = get_pronunciation(substituted_word, pron_dict)
+            if matched_pron and sub_pron:
+                print(f"    [{format_pronunciation(matched_pron)}] → [{format_pronunciation(sub_pron)}]")
         print()
 
 
