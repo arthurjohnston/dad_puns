@@ -343,7 +343,6 @@ Examples:
     print(f"Loaded {len(idioms)} idioms")
 
     # Load ConceptNet for related words
-    print("Loading ConceptNet...")
     concept_dict = load_conceptnet()
 
     print(f"Searching for words with edit distance <= {args.max_distance}...\n")
