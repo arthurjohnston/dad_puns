@@ -282,7 +282,7 @@ Examples:
         help='The word to find pun matches for'
     )
     parser.add_argument(
-        '--max-distance', '-d',
+        '--max-distance', '-m',
         type=int,
         default=1,
         help='Maximum phoneme edit distance (default: 1)'
@@ -297,8 +297,33 @@ Examples:
         action='store_true',
         help='Show phonetic pronunciations'
     )
+    parser.add_argument(
+        '--show-related', '-d',
+        action='store_true',
+        help='Show related words from ConceptNet and exit'
+    )
 
     args = parser.parse_args()
+
+    # Handle --show-related option
+    if args.show_related:
+        print(f"\nRelated words for '{args.word}':\n")
+        concept_dict = load_conceptnet()
+        entries = concept_dict.get(args.word.lower(), [])
+        if not entries:
+            print("No related words found.")
+            return
+        # Group by relation
+        by_relation = {}
+        for entry in entries:
+            if entry.relation in SKIP_RELATIONS:
+                continue
+            if entry.relation not in by_relation:
+                by_relation[entry.relation] = []
+            by_relation[entry.relation].append(entry.end)
+        for relation, words in sorted(by_relation.items()):
+            print(f"  {relation}: {', '.join(words)}")
+        return
 
     print(f"\nFinding idiom puns for '{args.word}'...\n")
 
