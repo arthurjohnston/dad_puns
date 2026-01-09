@@ -66,19 +66,90 @@ def get_pronunciation(word: str, pron_dict: dict) -> Optional[list[str]]:
     return None
 
 
-def phoneme_edit_distance(pron1: list[str], pron2: list[str]) -> int:
+phone_to_peers = {
+    # stops
+    "P":  ("K", "T"),
+    "T":  ("K", "P"),
+    "K":  ("P", "T"),
+    "B":  ("D", "G"),
+
+    #voiced stops
+    "D":  ("B", "G"),
+    "G":  ("B", "D"),
+
+    # affricates
+    "CH": (),
+    "JH": (),
+
+    # fricatives
+    "F":  ("HH", "S", "SH", "TH"),
+    "TH": ("F", "HH", "S", "SH"),
+    "S":  ("F", "HH", "SH", "TH"),
+    "SH": ("F", "HH", "S", "TH"),
+    "HH": ("F", "S", "SH", "TH"),
+
+    "V":  ("DH", "Z", "ZH"),
+    "DH": ("V", "Z", "ZH"),
+    "Z":  ("DH", "V", "ZH"),
+    "ZH": ("DH", "V", "Z"),
+
+    # sonorants
+    "M":  ("N", "NG"),
+    "N":  ("M", "NG"),
+    "NG": ("M", "N"),
+
+    "L":  ("R",),
+    "R":  ("L",),
+
+    "W":  ("Y",),
+    "Y":  ("W",),
+
+    # vowels (CMUdict, stressless phones)
+    "IY": ("AE", "EH", "EY", "IH"),
+    "IH": ("AE", "EH", "EY", "IY"),
+    "EY": ("AE", "EH", "IH", "IY"),
+    "EH": ("AE", "EY", "IH", "IY"),
+    "AE": ("EH", "EY", "IH", "IY"),
+
+    "AH":  ("AX", "AXR"),
+    "AX":  ("AH", "AXR"),
+    "AXR": ("AH", "AX"),
+
+    "UW": ("AA", "AO", "OW", "UH"),
+    "UH": ("AA", "AO", "OW", "UW"),
+    "OW": ("AA", "AO", "UH", "UW"),
+    "AO": ("AA", "OW", "UH", "UW"),
+    "AA": ("AO", "OW", "UH", "UW"),
+
+    "ER": (),
+
+    "AY": ("AW", "OY"),
+    "AW": ("AY", "OY"),
+    "OY": ("AW", "AY"),
+}
+
+def are_peer_phonemes(p1: str, p2: str) -> bool:
+    """Check if two phonemes (without stress markers) are in the same peer group."""
+    if p1 == p2:
+        return True
+    peers = phone_to_peers.get(p1, ())
+    return p2 in peers
+
+
+def phoneme_edit_distance(pron1: list[str], pron2: list[str]) -> float:
     """
     Calculate the Levenshtein edit distance between two pronunciations.
     Stressed vowels (ending in '1') must match - substituting them costs heavily.
+    Peer phonemes (similar sounds) cost 0.5 to substitute instead of 1.
     """
     m, n = len(pron1), len(pron2)
-    INF = 1000  # High cost to prevent stressed vowel changes
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    INF = 1000.0  # High cost to prevent stressed vowel changes
+    dp = [[0.0] * (n + 1) for _ in range(m + 1)]
 
     for i in range(m + 1):
-        dp[i][0] = i
+        dp[i][0] = float(i)
     for j in range(n + 1):
-        dp[0][j] = j
+        dp[0][j] = float(j)
 
     for i in range(1, m + 1):
         for j in range(1, n + 1):
@@ -94,11 +165,14 @@ def phoneme_edit_distance(pron1: list[str], pron2: list[str]) -> int:
                 # Heavy penalty if either is a primary stressed vowel
                 if ph1.endswith('1') or ph2.endswith('1'):
                     sub_cost = INF
+                # Reduced cost if phonemes are peers (similar sounds)
+                elif are_peer_phonemes(p1, p2):
+                    sub_cost = 0.5
                 else:
-                    sub_cost = 1
+                    sub_cost = 1.0
                 dp[i][j] = min(
-                    dp[i-1][j] + 1,      # deletion
-                    dp[i][j-1] + 1,      # insertion
+                    dp[i-1][j] + 1.0,      # deletion
+                    dp[i][j-1] + 1.0,      # insertion
                     dp[i-1][j-1] + sub_cost  # substitution
                 )
 
@@ -117,10 +191,10 @@ def find_idiom_puns(
     word: str,
     idioms: list[str],
     pron_dict: dict,
-    max_distance: int = 1,
+    max_distance: float = 1.0,
     source_word: str | None = None,
     relation: str | None = None
-) -> list[tuple[str, str, str, int, str | None, str | None]]:
+) -> list[tuple[str, str, str, float, str | None, str | None]]:
     """
     Find idioms where a word can be replaced with the input word.
 
@@ -128,12 +202,13 @@ def find_idiom_puns(
         word: The word to find pun matches for
         idioms: List of idiom phrases
         pron_dict: CMU pronunciation dictionary
-        max_distance: Maximum edit distance (default 1)
+        max_distance: Maximum edit distance (default 1.0)
         source_word: The original input word (if word is a related word)
         relation: The ConceptNet relation (if word is a related word)
 
     Returns:
         List of tuples: (original_idiom, punned_idiom, matched_word, distance, source_word, relation)
+        Excludes exact matches (distance == 0).
     """
     word_pron = get_pronunciation(word, pron_dict)
     if not word_pron:
