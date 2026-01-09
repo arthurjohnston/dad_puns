@@ -22,6 +22,11 @@ STOPWORDS = {
     'do', 'go', 'us', 'am',
 }
 
+# ConceptNet relations to skip (too generic/noisy)
+SKIP_RELATIONS = {
+    'HasContext', 'RelatedTo', 'AtLocation', 'HasA', 'HasPrerequisite',
+}
+
 
 def ensure_cmudict():
     """Download cmudict if not already present."""
@@ -250,6 +255,9 @@ Examples:
     seen_puns = set(r[1] for r in results)  # Track punned idioms we've seen
     entries = concept_dict.get(args.word.lower(), [])
     for entry in entries:
+        # Skip noisy/generic relations
+        if entry.relation in SKIP_RELATIONS:
+            continue
         related_results = find_idiom_puns(
             entry.end,
             idioms,
