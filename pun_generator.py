@@ -340,8 +340,6 @@ Examples:
         print("No idioms loaded. Please check your idioms file.")
         return
 
-    print(f"Loaded {len(idioms)} idioms")
-
     # Load ConceptNet for related words
     concept_dict = load_conceptnet()
 
@@ -356,6 +354,10 @@ Examples:
     for entry in entries:
         # Skip noisy/generic relations
         if entry.relation in SKIP_RELATIONS:
+            continue
+        # Skip related words with same pronunciation (no pun if sounds identical)
+        related_pron = get_pronunciation(entry.end, pron_dict)
+        if related_pron and word_pron and related_pron == word_pron:
             continue
         related_results = find_idiom_puns(
             entry.end,
