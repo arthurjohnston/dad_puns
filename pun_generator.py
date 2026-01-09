@@ -24,7 +24,7 @@ STOPWORDS = {
 
 # ConceptNet relations to skip (too generic/noisy)
 SKIP_RELATIONS = {
-    'HasContext', 'RelatedTo', 'AtLocation', 'HasA', 'HasPrerequisite', 'DerivedFrom'
+    'HasContext', 'RelatedTo', 'AtLocation', 'HasA', 'HasPrerequisite', 'DerivedFrom', 'EtymologicallyRelatedTo'
 }
 
 
