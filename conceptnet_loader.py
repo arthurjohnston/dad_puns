@@ -1,18 +1,19 @@
 """
-ConceptNet CSV loader.
+ConceptNet SQLite loader.
 
-Loads ConceptNet assertions from CSV and creates a dictionary
-mapping start words to their related entries.
+Loads ConceptNet assertions from SQLite database and provides
+dictionary-like access mapping start words to their related entries.
+
+Run build_conceptnet_db.py first to create the database from CSV.
 """
 
-import csv
-import os
+import sqlite3
 from pathlib import Path
 from typing import NamedTuple
 
 # TODO: Filter out relations (e.g., only keep RelatedTo, Synonym, IsA, etc.)
 
-CONCEPTNET_CSV = "conceptnet/conceptnet-assertions-5.7.0.csv"
+CONCEPTNET_DB = "conceptnet.db"
 
 
 class ConceptNetEntry(NamedTuple):
@@ -23,131 +24,97 @@ class ConceptNetEntry(NamedTuple):
     weight: float
 
 
-def extract_word(concept_uri: str) -> str | None:
+class ConceptNetDict:
     """
-    Extract the word from a ConceptNet URI.
+    Dictionary-like wrapper around SQLite database.
 
-    E.g., '/c/en/cat/n' -> 'cat'
-         '/c/en/hot_dog' -> 'hot dog'
+    Provides dict-style access (concept_dict[word] or concept_dict.get(word))
+    but fetches from SQLite on demand for fast startup.
     """
-    parts = concept_uri.split('/')
-    if len(parts) >= 4:
-        word = parts[3]
-        return word.replace('_', ' ')
-    return None
+
+    def __init__(self, db_path: str | Path):
+        self.db_path = Path(db_path)
+        self._conn = None
+
+    def _get_conn(self) -> sqlite3.Connection:
+        """Get or create database connection."""
+        if self._conn is None:
+            self._conn = sqlite3.connect(self.db_path)
+        return self._conn
+
+    def get(self, word: str, default=None) -> list[ConceptNetEntry]:
+        """Get entries for a word, returning default if not found."""
+        try:
+            return self[word]
+        except KeyError:
+            return default if default is not None else []
+
+    def __getitem__(self, word: str) -> list[ConceptNetEntry]:
+        """Get all entries for a given start word."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            'SELECT relation, start, end, weight FROM entries WHERE start = ?',
+            (word.lower(),)
+        )
+
+        rows = cursor.fetchall()
+        if not rows:
+            raise KeyError(word)
+
+        return [
+            ConceptNetEntry(relation=r[0], start=r[1], end=r[2], weight=r[3])
+            for r in rows
+        ]
+
+    def __contains__(self, word: str) -> bool:
+        """Check if word exists in database."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('SELECT 1 FROM entries WHERE start = ? LIMIT 1', (word.lower(),))
+        return cursor.fetchone() is not None
+
+    def close(self):
+        """Close database connection."""
+        if self._conn:
+            self._conn.close()
+            self._conn = None
 
 
-def extract_relation(relation_uri: str) -> str:
+def load_conceptnet(db_path: str | None = None) -> ConceptNetDict:
     """
-    Extract the relation name from a ConceptNet URI.
-
-    E.g., '/r/RelatedTo' -> 'RelatedTo'
-    """
-    return relation_uri.split('/')[-1]
-
-
-def is_english(concept_uri: str) -> bool:
-    """Check if a concept URI is English."""
-    return concept_uri.startswith('/c/en/')
-
-
-def load_conceptnet(
-    csv_path: str | None = None,
-    english_only: bool = True,
-    limit: int | None = None
-) -> dict[str, list[ConceptNetEntry]]:
-    """
-    Load ConceptNet CSV and create a dictionary from start words to entries.
+    Load ConceptNet from SQLite database.
 
     Args:
-        csv_path: Path to the ConceptNet CSV file
-        english_only: Only load English entries (default True)
-        limit: Maximum number of lines to process (for testing)
+        db_path: Path to the SQLite database file
 
     Returns:
-        Dictionary mapping start words to list of ConceptNetEntry objects
+        ConceptNetDict providing dictionary-like access to entries
     """
-    if csv_path is None:
-        # Try relative to script location
+    if db_path is None:
         script_dir = Path(__file__).parent
-        csv_path = script_dir / CONCEPTNET_CSV
+        db_path = script_dir / CONCEPTNET_DB
 
-    csv_path = Path(csv_path)
-    if not csv_path.exists():
-        print(f"Warning: ConceptNet CSV not found at '{csv_path}'")
-        return {}
+    db_path = Path(db_path)
+    if not db_path.exists():
+        print(f"Warning: ConceptNet database not found at '{db_path}'")
+        print("Run build_conceptnet_db.py first to create the database.")
+        return ConceptNetDict(db_path)  # Return empty dict-like object
 
-    print(f"Loading ConceptNet from {csv_path}...")
-
-    concept_dict: dict[str, list[ConceptNetEntry]] = {}
-    count = 0
-
-    with open(csv_path, 'r', encoding='utf-8') as f:
-        reader = csv.reader(f, delimiter='\t')
-
-        for row in reader:
-            if len(row) < 5:
-                continue
-
-            _, relation_uri, start_uri, end_uri, metadata = row[:5]
-
-            # Filter to English only
-            if english_only:
-                if not is_english(start_uri) or not is_english(end_uri):
-                    continue
-
-            start_word = extract_word(start_uri)
-            end_word = extract_word(end_uri)
-            relation = extract_relation(relation_uri)
-
-            if not start_word or not end_word:
-                continue
-
-            # Parse weight from metadata
-            weight = 1.0
-            if '"weight":' in metadata:
-                try:
-                    import json
-                    meta = json.loads(metadata)
-                    weight = meta.get('weight', 1.0)
-                except json.JSONDecodeError:
-                    pass
-
-            entry = ConceptNetEntry(
-                relation=relation,
-                start=start_word,
-                end=end_word,
-                weight=weight
-            )
-
-            if start_word not in concept_dict:
-                concept_dict[start_word] = []
-            concept_dict[start_word].append(entry)
-
-            count += 1
-            if count % 500000 == 0:
-                print(f"  Processed {count:,} entries...")
-
-            if limit and count >= limit:
-                break
-
-    print(f"Loaded {count:,} entries for {len(concept_dict):,} unique words")
-    return concept_dict
+    print(f"Loaded ConceptNet database from {db_path}")
+    return ConceptNetDict(db_path)
 
 
-def get_related_words(concept_dict: dict[str, list[ConceptNetEntry]], word: str) -> list[str]:
+def get_related_words(concept_dict: ConceptNetDict, word: str) -> list[str]:
     """Get all words related to the given word."""
     entries = concept_dict.get(word.lower(), [])
     return list(set(entry.end for entry in entries))
 
 
-# Global dictionary - populated by load_conceptnet()
-CONCEPTNET: dict[str, list[ConceptNetEntry]] = {}
-
-
 if __name__ == '__main__':
     # Test loading
-    concepts = load_conceptnet(limit=100000)
+    concepts = load_conceptnet()
     print(f"\nSample entries for 'cat':")
     for entry in concepts.get('cat', [])[:10]:
         print(f"  {entry.relation}: {entry.start} -> {entry.end} (weight: {entry.weight})")
