@@ -24,7 +24,7 @@ STOPWORDS = {
 
 # ConceptNet relations to skip (too generic/noisy)
 SKIP_RELATIONS = {
-    'HasContext', 'RelatedTo', 'AtLocation', 'HasA', 'HasPrerequisite',
+    'HasContext', 'RelatedTo', 'AtLocation', 'HasA', 'HasPrerequisite', 'DerivedFrom'
 }
 
 
@@ -323,7 +323,7 @@ Examples:
             by_relation[entry.relation].append(entry.end)
         for relation, words in sorted(by_relation.items()):
             print(f"  {relation}: {', '.join(words)}")
-        return
+        
 
     print(f"\nFinding idiom puns for '{args.word}'...\n")
 
