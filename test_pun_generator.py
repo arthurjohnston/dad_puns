@@ -4,7 +4,8 @@
 import unittest
 from pun_generator import (
     phoneme_edit_distance, get_stressed_vowel, is_stressed_vowel,
-    get_vowel, IPA_VOWELS, are_peer_phonemes, phone_to_peers
+    get_vowel, IPA_VOWELS, are_peer_phonemes, phone_to_peers,
+    count_syllables, MIN_WORD_LENGTH
 )
 
 
@@ -311,6 +312,43 @@ class TestPhoneToPeers(unittest.TestCase):
                 if peer in phone_to_peers:
                     self.assertIn(phoneme, phone_to_peers[peer],
                         f"{phoneme} is peer of {peer} but not vice versa")
+
+
+class TestCountSyllables(unittest.TestCase):
+    """Tests for count_syllables function."""
+
+    def test_one_syllable(self):
+        """Single syllable words."""
+        # cat [k ˈæ t]
+        self.assertEqual(count_syllables(['k', 'ˈæ', 't']), 1)
+        # dog [d ˈɑː ɡ]
+        self.assertEqual(count_syllables(['d', 'ˈɑː', 'ɡ']), 1)
+
+    def test_two_syllables(self):
+        """Two syllable words."""
+        # happy [h ˈæ p i]
+        self.assertEqual(count_syllables(['h', 'ˈæ', 'p', 'i']), 2)
+
+    def test_three_syllables(self):
+        """Three syllable words."""
+        # elephant [ˈɛ l ə f ə n t]
+        self.assertEqual(count_syllables(['ˈɛ', 'l', 'ə', 'f', 'ə', 'n', 't']), 3)
+
+    def test_empty(self):
+        """Empty pronunciation."""
+        self.assertEqual(count_syllables([]), 0)
+
+    def test_consonants_only(self):
+        """Consonants don't count as syllables."""
+        self.assertEqual(count_syllables(['k', 't', 's']), 0)
+
+
+class TestMinWordLength(unittest.TestCase):
+    """Tests for MIN_WORD_LENGTH constant."""
+
+    def test_min_word_length_value(self):
+        """MIN_WORD_LENGTH should be at least 2."""
+        self.assertGreaterEqual(MIN_WORD_LENGTH, 2)
 
 
 if __name__ == '__main__':

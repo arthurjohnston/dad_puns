@@ -176,6 +176,20 @@ def get_pronunciation(word: str) -> Optional[list[str]]:
 
 IPA_VOWELS = set('aɑæɐeəɛɜiɪɨoɔœøuʊʉɯʌyʏ')
 
+# Minimum word length for substitutions (filters out awkward single-letter replacements)
+MIN_WORD_LENGTH = 3
+
+
+def count_syllables(pron: list[str]) -> int:
+    """Count syllables by counting vowel-containing phonemes."""
+    count = 0
+    for phoneme in pron:
+        stripped = phoneme.lstrip('ˈˌ')
+        if any(c in IPA_VOWELS for c in stripped):
+            count += 1
+    return count
+
+
 def is_stressed_vowel(phoneme: str) -> bool:
     """Check if a phoneme is a primary stressed vowel (starts with ˈ and contains a vowel)."""
     if not phoneme.startswith('ˈ'):
@@ -271,7 +285,12 @@ def find_idiom_puns(
             print(f"Warning: No pronunciation found for '{word}'")
         return []
 
+    # Filter out short pun words (#6)
+    if len(word) < MIN_WORD_LENGTH:
+        return []
+
     stressed_vowel = get_stressed_vowel(word_pron)
+    word_syllables = count_syllables(word_pron)
 
     results = []
     seen_puns = set()
@@ -289,8 +308,16 @@ def find_idiom_puns(
             if clean_word in STOPWORDS:
                 continue
 
+            # Skip short words (#6)
+            if len(clean_word) < MIN_WORD_LENGTH:
+                continue
+
             idiom_word_pron = get_pronunciation(clean_word)
             if not idiom_word_pron:
+                continue
+
+            # Syllable counts must match (#1)
+            if count_syllables(idiom_word_pron) != word_syllables:
                 continue
 
             # Stressed vowels must match
