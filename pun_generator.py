@@ -4,6 +4,22 @@ Pun Generator - Finds pun opportunities by matching words to idioms.
 
 Takes a single word, compares its pronunciation to words in common idioms,
 and suggests puns where a word can be swapped with a similar-sounding word.
+
+TODO: Quality improvements to implement:
+  Phonetic:
+    1. Syllable count matching - prefer same syllable count
+    2. Prefer end-rhymes - matching final sounds makes stronger puns
+    3. Weight by position - matches at word start/end matter more
+  Word Quality:
+    4. Use word frequency - prefer common words over obscure ones
+    5. Part-of-speech matching - nouns replacing nouns sounds more natural
+    6. Filter short substitutions - single letters like "a" sound awkward
+  ConceptNet:
+    7. Rank relations by humor value - CapableOf, Desires, Antonym > IsA, HasProperty
+    8. Filter multi-word phrases - related words with spaces don't work
+    9. Filter obscure related words - use word frequency on ConceptNet results
+  Semantic:
+    10. Bonus for semantic contrast - puns funnier when meaning shifts dramatically
 """
 
 import argparse
