@@ -8,12 +8,15 @@ and suggests puns where a word can be swapped with a similar-sounding word.
 
 import argparse
 import os
-import nltk
-from nltk.corpus import cmudict
 from pathlib import Path
 from typing import Optional
+from phonemizer import phonemize
+from phonemizer.separator import Separator
 
 from conceptnet_loader import load_conceptnet, get_related_words
+
+# Cache for pronunciations to avoid repeated phonemizer calls
+_pron_cache: dict[str, list[str]] = {}
 
 # Common words to skip when matching (too short/generic to make good puns)
 STOPWORDS = {
@@ -26,15 +29,6 @@ STOPWORDS = {
 SKIP_RELATIONS = {
     'HasContext', 'RelatedTo', 'AtLocation', 'HasA', 'HasPrerequisite', 'DerivedFrom', 'EtymologicallyRelatedTo'
 }
-
-
-def ensure_cmudict():
-    """Download cmudict if not already present."""
-    try:
-        cmudict.dict()
-    except LookupError:
-        print("Downloading CMU Pronouncing Dictionary...")
-        nltk.download('cmudict', quiet=True)
 
 
 def load_idioms(idioms_file: str) -> list[str]:
@@ -53,94 +47,63 @@ def load_idioms(idioms_file: str) -> list[str]:
         return [line.strip().lower() for line in f if line.strip()]
 
 
-def get_pronunciation(word: str, pron_dict: dict) -> Optional[list[str]]:
+def get_pronunciation(word: str) -> Optional[list[str]]:
     """
-    Get the CMU pronunciation for a word.
+    Get the IPA pronunciation for a word using phonemizer.
 
     Returns:
         List of phonemes or None if not found
     """
     word_lower = word.lower()
-    if word_lower in pron_dict:
-        return pron_dict[word_lower][0]
+
+    # Check cache first
+    if word_lower in _pron_cache:
+        return _pron_cache[word_lower]
+
+    try:
+        # Use espeak backend with phoneme separator and stress markers
+        ipa = phonemize(
+            word_lower,
+            language='en-us',
+            backend='espeak',
+            separator=Separator(phone=' ', word='', syllable=''),
+            strip=True,
+            with_stress=True,
+        )
+        if ipa:
+            # Split into individual phonemes
+            phonemes = ipa.split()
+            _pron_cache[word_lower] = phonemes
+            return phonemes
+    except Exception:
+        pass
+
+    _pron_cache[word_lower] = None
     return None
 
 
-phone_to_peers = {
-    # stops
-    "P":  ("K", "T"),
-    "T":  ("K", "P"),
-    "K":  ("P", "T"),
-    "B":  ("D", "G"),
+IPA_VOWELS = set('aɑæɐeəɛɜiɪɨoɔœøuʊʉɯʌyʏ')
 
-    #voiced stops
-    "D":  ("B", "G"),
-    "G":  ("B", "D"),
+def is_stressed_vowel(phoneme: str) -> bool:
+    """Check if a phoneme is a primary stressed vowel (starts with ˈ and contains a vowel)."""
+    if not phoneme.startswith('ˈ'):
+        return False
+    return any(c in IPA_VOWELS for c in phoneme)
 
-    # affricates
-    "CH": (),
-    "JH": (),
 
-    # fricatives
-    "F":  ("HH", "S", "SH", "TH"),
-    "TH": ("F", "HH", "S", "SH"),
-    "S":  ("F", "HH", "SH", "TH"),
-    "SH": ("F", "HH", "S", "TH"),
-    "HH": ("F", "S", "SH", "TH"),
-
-    "V":  ("DH", "Z", "ZH"),
-    "DH": ("V", "Z", "ZH"),
-    "Z":  ("DH", "V", "ZH"),
-    "ZH": ("DH", "V", "Z"),
-
-    # sonorants
-    "M":  ("N", "NG"),
-    "N":  ("M", "NG"),
-    "NG": ("M", "N"),
-
-    "L":  ("R",),
-    "R":  ("L",),
-
-    "W":  ("Y",),
-    "Y":  ("W",),
-
-    # vowels (CMUdict, stressless phones)
-    "IY": ("AE", "EH", "EY", "IH"),
-    "IH": ("AE", "EH", "EY", "IY"),
-    "EY": ("AE", "EH", "IH", "IY"),
-    "EH": ("AE", "EY", "IH", "IY"),
-    "AE": ("EH", "EY", "IH", "IY"),
-
-    "AH":  ("AX", "AXR"),
-    "AX":  ("AH", "AXR"),
-    "AXR": ("AH", "AX"),
-
-    "UW": ("AA", "AO", "OW", "UH"),
-    "UH": ("AA", "AO", "OW", "UW"),
-    "OW": ("AA", "AO", "UH", "UW"),
-    "AO": ("AA", "OW", "UH", "UW"),
-    "AA": ("AO", "OW", "UH", "UW"),
-
-    "ER": (),
-
-    "AY": ("AW", "OY"),
-    "AW": ("AY", "OY"),
-    "OY": ("AW", "AY"),
-}
-
-def are_peer_phonemes(p1: str, p2: str) -> bool:
-    """Check if two phonemes (without stress markers) are in the same peer group."""
-    if p1 == p2:
-        return True
-    peers = phone_to_peers.get(p1, ())
-    return p2 in peers
+def get_vowel(phoneme: str) -> Optional[str]:
+    """Extract the vowel from a phoneme, stripping stress markers."""
+    stripped = phoneme.lstrip('ˈˌ')
+    for c in stripped:
+        if c in IPA_VOWELS:
+            return c
+    return None
 
 
 def phoneme_edit_distance(pron1: list[str], pron2: list[str]) -> float:
     """
     Calculate the Levenshtein edit distance between two pronunciations.
-    Stressed vowels (ending in '1') must match - substituting them costs heavily.
-    Peer phonemes (similar sounds) cost 0.5 to substitute instead of 1.
+    Stressed vowels (marked with ˈ) must match - substituting them costs heavily.
     """
     m, n = len(pron1), len(pron2)
     INF = 1000.0  # High cost to prevent stressed vowel changes
@@ -156,18 +119,15 @@ def phoneme_edit_distance(pron1: list[str], pron2: list[str]) -> float:
             ph1 = pron1[i-1]
             ph2 = pron2[j-1]
             # Strip stress markers for comparison
-            p1 = ph1.rstrip('012')
-            p2 = ph2.rstrip('012')
+            p1 = ph1.lstrip('ˈˌ')
+            p2 = ph2.lstrip('ˈˌ')
 
             if p1 == p2:
                 dp[i][j] = dp[i-1][j-1]
             else:
                 # Heavy penalty if either is a primary stressed vowel
-                if ph1.endswith('1') or ph2.endswith('1'):
+                if is_stressed_vowel(ph1) or is_stressed_vowel(ph2):
                     sub_cost = INF
-                # Reduced cost if phonemes are peers (similar sounds)
-                elif are_peer_phonemes(p1, p2):
-                    sub_cost = 0.5
                 else:
                     sub_cost = 1.0
                 dp[i][j] = min(
@@ -180,17 +140,16 @@ def phoneme_edit_distance(pron1: list[str], pron2: list[str]) -> float:
 
 
 def get_stressed_vowel(pron: list[str]) -> Optional[str]:
-    """Extract the primary stressed vowel (ending in '1') from a pronunciation."""
+    """Extract the primary stressed vowel (marked with ˈ) from a pronunciation."""
     for phoneme in pron:
-        if phoneme.endswith('1'):
-            return phoneme.rstrip('1')
+        if is_stressed_vowel(phoneme):
+            return get_vowel(phoneme)
     return None
 
 
 def find_idiom_puns(
     word: str,
     idioms: list[str],
-    pron_dict: dict,
     max_distance: float = 1.0,
     source_word: str | None = None,
     relation: str | None = None
@@ -201,7 +160,6 @@ def find_idiom_puns(
     Args:
         word: The word to find pun matches for
         idioms: List of idiom phrases
-        pron_dict: CMU pronunciation dictionary
         max_distance: Maximum edit distance (default 1.0)
         source_word: The original input word (if word is a related word)
         relation: The ConceptNet relation (if word is a related word)
@@ -210,7 +168,7 @@ def find_idiom_puns(
         List of tuples: (original_idiom, punned_idiom, matched_word, distance, source_word, relation)
         Excludes exact matches (distance == 0).
     """
-    word_pron = get_pronunciation(word, pron_dict)
+    word_pron = get_pronunciation(word)
     if not word_pron:
         # Only warn for single words (multi-word phrases won't have pronunciations)
         if ' ' not in word:
@@ -235,7 +193,7 @@ def find_idiom_puns(
             if clean_word in STOPWORDS:
                 continue
 
-            idiom_word_pron = get_pronunciation(clean_word, pron_dict)
+            idiom_word_pron = get_pronunciation(clean_word)
             if not idiom_word_pron:
                 continue
 
@@ -323,15 +281,12 @@ Examples:
             by_relation[entry.relation].append(entry.end)
         for relation, words in sorted(by_relation.items()):
             print(f"  {relation}: {', '.join(words)}")
-        
+        return
 
     print(f"\nFinding idiom puns for '{args.word}'...\n")
 
-    ensure_cmudict()
-    pron_dict = cmudict.dict()
-
     # Show input word pronunciation
-    word_pron = get_pronunciation(args.word, pron_dict)
+    word_pron = get_pronunciation(args.word)
     if word_pron and args.show_pronunciation:
         print(f"'{args.word}' pronunciation: [{format_pronunciation(word_pron)}]\n")
 
@@ -346,7 +301,7 @@ Examples:
     print(f"Searching for words with edit distance <= {args.max_distance}...\n")
 
     # Search with the original word
-    results = find_idiom_puns(args.word, idioms, pron_dict, args.max_distance)
+    results = find_idiom_puns(args.word, idioms, args.max_distance)
 
     # Also search with related words from ConceptNet
     seen_puns = set(r[1] for r in results)  # Track punned idioms we've seen
@@ -356,13 +311,12 @@ Examples:
         if entry.relation in SKIP_RELATIONS:
             continue
         # Skip related words with same pronunciation (no pun if sounds identical)
-        related_pron = get_pronunciation(entry.end, pron_dict)
+        related_pron = get_pronunciation(entry.end)
         if related_pron and word_pron and related_pron == word_pron:
             continue
         related_results = find_idiom_puns(
             entry.end,
             idioms,
-            pron_dict,
             args.max_distance,
             source_word=args.word,
             relation=entry.relation
@@ -404,8 +358,8 @@ Examples:
             print(f"    ('{matched_word}' → '{args.word}', distance: {distance})")
 
         if args.show_pronunciation:
-            matched_pron = get_pronunciation(matched_word, pron_dict)
-            sub_pron = get_pronunciation(substituted_word, pron_dict)
+            matched_pron = get_pronunciation(matched_word)
+            sub_pron = get_pronunciation(substituted_word)
             if matched_pron and sub_pron:
                 print(f"    [{format_pronunciation(matched_pron)}] → [{format_pronunciation(sub_pron)}]")
         print()
