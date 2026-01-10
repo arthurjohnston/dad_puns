@@ -30,6 +30,7 @@ from phonemizer import phonemize
 from phonemizer.separator import Separator
 
 from conceptnet_loader import load_conceptnet, get_related_words
+from word_frequency import word_to_count
 
 # Cache for pronunciations to avoid repeated phonemizer calls
 _pron_cache: dict[str, list[str]] = {}
@@ -178,6 +179,29 @@ IPA_VOWELS = set('aɑæɐeəɛɜiɪɨoɔœøuʊʉɯʌyʏ')
 
 # Minimum word length for substitutions (filters out awkward single-letter replacements)
 MIN_WORD_LENGTH = 3
+
+
+def get_word_frequency(word: str) -> int:
+    """Get the frequency count for a word (0 if not in dictionary)."""
+    return word_to_count.get(word.lower(), 0)
+
+
+def pun_rank(edit_distance: float, word_frequency: int) -> tuple[float, int]:
+    """
+    Calculate ranking score for a pun result.
+
+    Returns a tuple for sorting where:
+    - Lower edit_distance is always better (primary sort)
+    - Higher word_frequency is better (secondary sort, negated for ascending sort)
+
+    Args:
+        edit_distance: Phoneme edit distance (lower is better)
+        word_frequency: Word frequency count (higher is better)
+
+    Returns:
+        Tuple (edit_distance, -word_frequency) for use in sorting
+    """
+    return (edit_distance, -word_frequency)
 
 
 def count_syllables(pron: list[str]) -> int:
@@ -337,8 +361,15 @@ def find_idiom_puns(
                     seen_puns.add(punned_idiom)
                     results.append((idiom, punned_idiom, clean_word, distance, source_word, relation))
 
-    # Sort by distance, then alphabetically
-    results.sort(key=lambda x: (x[3], x[0]))
+    # Sort by edit distance (primary), then word frequency (secondary, higher is better)
+    def sort_key(result):
+        distance = result[3]
+        punned_idiom = result[1]
+        # Extract the uppercase (substituted) word
+        sub_word = next((w for w in punned_idiom.split() if w.isupper()), '').lower()
+        return pun_rank(distance, get_word_frequency(sub_word))
+
+    results.sort(key=sort_key)
     return results
 
 
@@ -450,8 +481,14 @@ Examples:
                 seen_puns.add(r[1])
                 results.append(r)
 
-    # Re-sort all results
-    results.sort(key=lambda x: (x[3], x[0]))
+    # Re-sort all results by edit distance (primary), word frequency (secondary)
+    def sort_key(result):
+        distance = result[3]
+        punned_idiom = result[1]
+        sub_word = next((w for w in punned_idiom.split() if w.isupper()), '').lower()
+        return pun_rank(distance, get_word_frequency(sub_word))
+
+    results.sort(key=sort_key)
 
     if not results:
         print("No pun matches found. Try:")

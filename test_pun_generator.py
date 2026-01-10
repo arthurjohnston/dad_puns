@@ -5,7 +5,7 @@ import unittest
 from pun_generator import (
     phoneme_edit_distance, get_stressed_vowel, is_stressed_vowel,
     get_vowel, IPA_VOWELS, are_peer_phonemes, phone_to_peers,
-    count_syllables, MIN_WORD_LENGTH
+    count_syllables, MIN_WORD_LENGTH, get_word_frequency, pun_rank
 )
 
 
@@ -349,6 +349,50 @@ class TestMinWordLength(unittest.TestCase):
     def test_min_word_length_value(self):
         """MIN_WORD_LENGTH should be at least 2."""
         self.assertGreaterEqual(MIN_WORD_LENGTH, 2)
+
+
+class TestGetWordFrequency(unittest.TestCase):
+    """Tests for get_word_frequency function."""
+
+    def test_common_word(self):
+        """Common words should have high frequency."""
+        freq = get_word_frequency('the')
+        self.assertGreater(freq, 0)
+
+    def test_unknown_word(self):
+        """Unknown words should return 0."""
+        freq = get_word_frequency('xyzabc123notaword')
+        self.assertEqual(freq, 0)
+
+    def test_case_insensitive(self):
+        """Frequency lookup should be case insensitive."""
+        self.assertEqual(get_word_frequency('cat'), get_word_frequency('CAT'))
+
+
+class TestPunRank(unittest.TestCase):
+    """Tests for pun_rank function."""
+
+    def test_returns_tuple(self):
+        """pun_rank should return a tuple."""
+        result = pun_rank(1.0, 1000)
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+
+    def test_lower_distance_sorts_first(self):
+        """Lower edit distance should always sort before higher."""
+        rank_low = pun_rank(0.5, 100)
+        rank_high = pun_rank(1.0, 1000000)  # Even with much higher frequency
+        self.assertLess(rank_low, rank_high)
+
+    def test_higher_frequency_sorts_first_same_distance(self):
+        """Higher frequency should sort first when distance is equal."""
+        rank_common = pun_rank(1.0, 1000000)
+        rank_rare = pun_rank(1.0, 100)
+        self.assertLess(rank_common, rank_rare)
+
+    def test_same_values(self):
+        """Same values should produce equal ranks."""
+        self.assertEqual(pun_rank(1.0, 500), pun_rank(1.0, 500))
 
 
 if __name__ == '__main__':
