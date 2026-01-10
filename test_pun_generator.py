@@ -2,7 +2,10 @@
 """Tests for pun_generator module."""
 
 import unittest
-from pun_generator import phoneme_edit_distance, get_stressed_vowel, is_stressed_vowel, get_vowel, IPA_VOWELS
+from pun_generator import (
+    phoneme_edit_distance, get_stressed_vowel, is_stressed_vowel,
+    get_vowel, IPA_VOWELS, are_peer_phonemes, phone_to_peers
+)
 
 
 class TestPhonemeEditDistance(unittest.TestCase):
@@ -103,9 +106,10 @@ class TestPhonemeEditDistance(unittest.TestCase):
 
     def test_secondary_stress_can_substitute(self):
         """Secondary stress (ˌ) should allow normal substitution."""
+        # Use non-peer vowels (ɛ is front, ʌ is central - not peers)
         pron1 = ['k', 'ˌɛ', 't']
-        pron2 = ['k', 'ˌɪ', 't']
-        # Should be 1 (normal substitution) since neither is primary stress
+        pron2 = ['k', 'ˌʌ', 't']
+        # Should be 1 (normal substitution) since neither is primary stress and not peers
         self.assertEqual(phoneme_edit_distance(pron1, pron2), 1.0)
 
     def test_returns_float(self):
@@ -198,6 +202,115 @@ class TestIPAVowels(unittest.TestCase):
         consonants = ['k', 't', 'p', 'b', 'd', 'g', 's', 'z', 'f', 'v', 'm', 'n', 'l', 'r']
         for cons in consonants:
             self.assertNotIn(cons, IPA_VOWELS, f"'{cons}' should not be in IPA_VOWELS")
+
+
+class TestArePeerPhonemes(unittest.TestCase):
+    """Tests for are_peer_phonemes function."""
+
+    def test_same_phoneme_is_peer(self):
+        """Same phoneme should be considered a peer of itself."""
+        self.assertTrue(are_peer_phonemes('p', 'p'))
+        self.assertTrue(are_peer_phonemes('æ', 'æ'))
+
+    def test_peer_stops(self):
+        """Voiceless stops p/t/k should be peers."""
+        self.assertTrue(are_peer_phonemes('p', 'k'))
+        self.assertTrue(are_peer_phonemes('p', 't'))
+        self.assertTrue(are_peer_phonemes('t', 'k'))
+
+    def test_peer_voiced_stops(self):
+        """Voiced stops b/d/ɡ should be peers."""
+        self.assertTrue(are_peer_phonemes('b', 'd'))
+        self.assertTrue(are_peer_phonemes('b', 'ɡ'))
+        self.assertTrue(are_peer_phonemes('d', 'ɡ'))
+
+    def test_peer_fricatives_voiceless(self):
+        """Voiceless fricatives f/θ/s/ʃ/h should be peers."""
+        self.assertTrue(are_peer_phonemes('f', 's'))
+        self.assertTrue(are_peer_phonemes('f', 'θ'))
+        self.assertTrue(are_peer_phonemes('s', 'ʃ'))
+
+    def test_peer_fricatives_voiced(self):
+        """Voiced fricatives v/ð/z/ʒ should be peers."""
+        self.assertTrue(are_peer_phonemes('v', 'z'))
+        self.assertTrue(are_peer_phonemes('v', 'ð'))
+        self.assertTrue(are_peer_phonemes('z', 'ʒ'))
+
+    def test_peer_nasals(self):
+        """Nasals m/n/ŋ should be peers."""
+        self.assertTrue(are_peer_phonemes('m', 'n'))
+        self.assertTrue(are_peer_phonemes('m', 'ŋ'))
+        self.assertTrue(are_peer_phonemes('n', 'ŋ'))
+
+    def test_peer_liquids(self):
+        """Liquids l/ɹ should be peers."""
+        self.assertTrue(are_peer_phonemes('l', 'ɹ'))
+        self.assertTrue(are_peer_phonemes('ɹ', 'l'))
+
+    def test_peer_glides(self):
+        """Glides w/j should be peers."""
+        self.assertTrue(are_peer_phonemes('w', 'j'))
+        self.assertTrue(are_peer_phonemes('j', 'w'))
+
+    def test_peer_front_vowels(self):
+        """Front vowels i/ɪ/eɪ/ɛ/æ should be peers."""
+        self.assertTrue(are_peer_phonemes('i', 'ɪ'))
+        self.assertTrue(are_peer_phonemes('eɪ', 'ɛ'))
+        self.assertTrue(are_peer_phonemes('æ', 'ɛ'))
+
+    def test_peer_back_vowels(self):
+        """Back vowels u/ʊ/oʊ/ɔ/ɑ should be peers."""
+        self.assertTrue(are_peer_phonemes('u', 'ʊ'))
+        self.assertTrue(are_peer_phonemes('oʊ', 'ɔ'))
+        self.assertTrue(are_peer_phonemes('ɑ', 'ɔ'))
+
+    def test_peer_diphthongs(self):
+        """Diphthongs aɪ/aʊ/ɔɪ should be peers."""
+        self.assertTrue(are_peer_phonemes('aɪ', 'aʊ'))
+        self.assertTrue(are_peer_phonemes('aʊ', 'ɔɪ'))
+        self.assertTrue(are_peer_phonemes('aɪ', 'ɔɪ'))
+
+    def test_non_peers(self):
+        """Phonemes from different groups should not be peers."""
+        self.assertFalse(are_peer_phonemes('p', 'm'))  # stop vs nasal
+        self.assertFalse(are_peer_phonemes('f', 'l'))  # fricative vs liquid
+        self.assertFalse(are_peer_phonemes('b', 'p'))  # voiced vs voiceless stop
+        self.assertFalse(are_peer_phonemes('i', 'u'))  # front vs back vowel
+
+    def test_unknown_phoneme(self):
+        """Unknown phonemes should not be peers with anything."""
+        self.assertFalse(are_peer_phonemes('xx', 'p'))
+        self.assertFalse(are_peer_phonemes('p', 'xx'))
+
+
+class TestPhoneToPeers(unittest.TestCase):
+    """Tests for phone_to_peers data structure."""
+
+    def test_all_stops_present(self):
+        """All stop consonants should be in phone_to_peers."""
+        stops = ['p', 't', 'k', 'b', 'd', 'ɡ']
+        for stop in stops:
+            self.assertIn(stop, phone_to_peers)
+
+    def test_all_fricatives_present(self):
+        """All fricatives should be in phone_to_peers."""
+        fricatives = ['f', 'θ', 's', 'ʃ', 'h', 'v', 'ð', 'z', 'ʒ']
+        for fric in fricatives:
+            self.assertIn(fric, phone_to_peers)
+
+    def test_all_nasals_present(self):
+        """All nasals should be in phone_to_peers."""
+        nasals = ['m', 'n', 'ŋ']
+        for nasal in nasals:
+            self.assertIn(nasal, phone_to_peers)
+
+    def test_symmetry(self):
+        """Peer relationships should be symmetric."""
+        for phoneme, peers in phone_to_peers.items():
+            for peer in peers:
+                if peer in phone_to_peers:
+                    self.assertIn(phoneme, phone_to_peers[peer],
+                        f"{phoneme} is peer of {peer} but not vice versa")
 
 
 if __name__ == '__main__':

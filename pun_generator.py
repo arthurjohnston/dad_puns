@@ -30,6 +30,82 @@ SKIP_RELATIONS = {
     'HasContext', 'RelatedTo', 'AtLocation', 'HasA', 'HasPrerequisite', 'DerivedFrom', 'EtymologicallyRelatedTo'
 }
 
+# IPA-ish English phoneme peer groups (space-free tokens like phonemizer output);
+# diphthongs/rhotics are multi-char strings (e.g., "eɪ", "oʊ", "aɪ", "ɝ", "ɚ").
+phone_to_peers = {
+    # stops
+    "p": ("t", "k"),
+    "t": ("p", "k"),
+    "k": ("p", "t"),
+
+    "b": ("d", "ɡ"),
+    "d": ("b", "ɡ"),
+    "ɡ": ("b", "d"),
+
+    # affricates
+    "tʃ": (),
+    "dʒ": (),
+
+    # fricatives
+    "f": ("θ", "s", "ʃ", "h"),
+    "θ": ("f", "s", "ʃ", "h"),
+    "s": ("f", "θ", "ʃ", "h"),
+    "ʃ": ("f", "θ", "s", "h"),
+    "h": ("f", "θ", "s", "ʃ"),
+
+    "v": ("ð", "z", "ʒ"),
+    "ð": ("v", "z", "ʒ"),
+    "z": ("v", "ð", "ʒ"),
+    "ʒ": ("v", "ð", "z"),
+
+    # sonorants
+    "m": ("n", "ŋ"),
+    "n": ("m", "ŋ"),
+    "ŋ": ("m", "n"),
+
+    "l": ("ɹ",),
+    "ɹ": ("l",),
+
+    "w": ("j",),
+    "j": ("w",),
+
+    # vowels (rough CMUdict->IPA equivalents, stressless)
+    # front-ish set
+    "i":  ("ɪ", "eɪ", "ɛ", "æ"),
+    "ɪ":  ("i", "eɪ", "ɛ", "æ"),
+    "eɪ": ("i", "ɪ", "ɛ", "æ"),
+    "ɛ":  ("i", "ɪ", "eɪ", "æ"),
+    "æ":  ("i", "ɪ", "eɪ", "ɛ"),
+
+    # central-ish set
+    "ʌ": ("ə", "ɚ"),
+    "ə": ("ʌ", "ɚ"),
+    "ɚ": ("ʌ", "ə"),
+
+    # back-ish set
+    "u":  ("ʊ", "oʊ", "ɔ", "ɑ"),
+    "ʊ":  ("u", "oʊ", "ɔ", "ɑ"),
+    "oʊ": ("u", "ʊ", "ɔ", "ɑ"),
+    "ɔ":  ("u", "ʊ", "oʊ", "ɑ"),
+    "ɑ":  ("u", "ʊ", "oʊ", "ɔ"),
+
+    # rhotic vowel
+    "ɝ": (),
+
+    # diphthongs
+    "aɪ": ("aʊ", "ɔɪ"),
+    "aʊ": ("aɪ", "ɔɪ"),
+    "ɔɪ": ("aɪ", "aʊ"),
+}
+
+
+def are_peer_phonemes(p1: str, p2: str) -> bool:
+    """Check if two phonemes (without stress markers) are in the same peer group."""
+    if p1 == p2:
+        return True
+    peers = phone_to_peers.get(p1, ())
+    return p2 in peers
+
 
 def load_idioms(idioms_file: str) -> list[str]:
     """Load idioms from a text file (one per line)."""
@@ -104,6 +180,7 @@ def phoneme_edit_distance(pron1: list[str], pron2: list[str]) -> float:
     """
     Calculate the Levenshtein edit distance between two pronunciations.
     Stressed vowels (marked with ˈ) must match - substituting them costs heavily.
+    Peer phonemes (similar sounds) cost 0.5 to substitute instead of 1.
     """
     m, n = len(pron1), len(pron2)
     INF = 1000.0  # High cost to prevent stressed vowel changes
@@ -128,6 +205,9 @@ def phoneme_edit_distance(pron1: list[str], pron2: list[str]) -> float:
                 # Heavy penalty if either is a primary stressed vowel
                 if is_stressed_vowel(ph1) or is_stressed_vowel(ph2):
                     sub_cost = INF
+                # Reduced cost if phonemes are peers (similar sounds)
+                elif are_peer_phonemes(p1, p2):
+                    sub_cost = 0.5
                 else:
                     sub_cost = 1.0
                 dp[i][j] = min(
