@@ -60,7 +60,7 @@ STOPWORDS = {
 # ConceptNet relations to skip (too generic/noisy)
 SKIP_RELATIONS = {
     'HasContext', 'RelatedTo', 'AtLocation', 'HasA', 'HasPrerequisite', 'DerivedFrom',
-    'EtymologicallyRelatedTo', 'IsA', 'DistinctFrom'
+    'EtymologicallyRelatedTo', 'IsA', 'DistinctFrom', 'MadeOf'
 }
 
 # IPA-ish English phoneme peer groups (space-free tokens like phonemizer output);
