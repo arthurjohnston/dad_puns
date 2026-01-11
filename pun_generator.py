@@ -26,14 +26,29 @@ import argparse
 import os
 from pathlib import Path
 from typing import Optional
-from phonemizer import phonemize
 from phonemizer.separator import Separator
+from phonemizer.backend import EspeakBackend
 
 from conceptnet_loader import load_conceptnet, get_related_words
 from word_frequency import word_to_count
 
 # Cache for pronunciations to avoid repeated phonemizer calls
 _pron_cache: dict[str, list[str]] = {}
+
+# Persistent phonemizer backend and separator (initialized lazily)
+_espeak_backend = None
+_phoneme_separator = Separator(phone=' ', word='', syllable='')
+
+
+def _get_backend():
+    """Get or create the persistent espeak backend."""
+    global _espeak_backend
+    if _espeak_backend is None:
+        _espeak_backend = EspeakBackend(
+            language='en-us',
+            with_stress=True,
+        )
+    return _espeak_backend
 
 # Common words to skip when matching (too short/generic to make good puns)
 STOPWORDS = {
@@ -154,15 +169,13 @@ def get_pronunciation(word: str) -> Optional[list[str]]:
         return _pron_cache[word_lower]
 
     try:
-        # Use espeak backend with phoneme separator and stress markers
-        ipa = phonemize(
-            word_lower,
-            language='en-us',
-            backend='espeak',
-            separator=Separator(phone=' ', word='', syllable=''),
+        # Use persistent espeak backend for performance
+        backend = _get_backend()
+        ipa = backend.phonemize(
+            [word_lower],
+            separator=_phoneme_separator,
             strip=True,
-            with_stress=True,
-        )
+        )[0]
         if ipa:
             # Split into individual phonemes
             phonemes = ipa.split()
