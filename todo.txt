@@ -12,7 +12,7 @@ Word Quality:
 
 ConceptNet:
   [ ] 7. Rank relations by humor value - CapableOf, Desires, Antonym > IsA, HasProperty
-  [ ] 8. Filter multi-word phrases - related words with spaces don't work
+  [x] 8. Filter multi-word phrases - related words with spaces don't work
   [x] 9. Filter obscure related words - use word frequency on ConceptNet results
 
 Semantic:

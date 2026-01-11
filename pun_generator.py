@@ -480,6 +480,9 @@ Examples:
         # Skip obscure words not in word frequency list (#9)
         if entry.end.lower() not in word_to_count:
             continue
+        # Skip multi-word phrases (#8)
+        if ' ' in entry.end:
+            continue
         # Skip related words with same pronunciation (no pun if sounds identical)
         related_pron = get_pronunciation(entry.end)
         if related_pron and word_pron and related_pron == word_pron:
