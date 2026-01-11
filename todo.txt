@@ -1,2 +1,19 @@
-lemma words to remove duplicates
-move away from cmudict
+Quality improvements:
+
+Phonetic:
+  [x] 1. Syllable count matching - prefer same syllable count
+  [ ] 2. Prefer end-rhymes - matching final sounds makes stronger puns
+  [ ] 3. Weight by position - matches at word start/end matter more
+
+Word Quality:
+  [x] 4. Use word frequency - prefer common words over obscure ones
+  [ ] 5. Part-of-speech matching - nouns replacing nouns sounds more natural
+  [x] 6. Filter short substitutions - single letters like "a" sound awkward
+
+ConceptNet:
+  [ ] 7. Rank relations by humor value - CapableOf, Desires, Antonym > IsA, HasProperty
+  [ ] 8. Filter multi-word phrases - related words with spaces don't work
+  [x] 9. Filter obscure related words - use word frequency on ConceptNet results
+
+Semantic:
+  [ ] 10. Bonus for semantic contrast - puns funnier when meaning shifts dramatically
