@@ -17,3 +17,7 @@ ConceptNet:
 
 Semantic:
   [ ] 10. Bonus for semantic contrast - puns funnier when meaning shifts dramatically
+
+data sources:
+  [ ] 11. add more common phrases to idioms.txt
+  [ ] 12. Find another source to supplement conceptdb
